@@ -227,120 +227,130 @@ app.post('/api/auth/send-otp', asyncHandler(async (req, res) => {
   const normalizedEmail = String(email).trim().toLowerCase();
   const existingUser = await User.findOne({ email: normalizedEmail });
 
-  if (mode === 'signup') {
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-    }
-
-    if (existingUser) {
-      const isMatch = await verifyPassword(password, existingUser.passwordHash);
-      if (!isMatch) {
-        return res.status(400).json({ error: 'User already exists. Please sign in instead.' });
-      }
-    } else {
-      const hashedPassword = await hashPassword(password);
-      await User.create({
-        email: normalizedEmail,
-        passwordHash: hashedPassword,
-        onboarded: false,
-        mealLogs: [],
-        weightHistory: [],
-        dailyWater: 0,
-        dailyBurned: 0,
-        dailyWaterTarget: 2500,
-        telemetry: [],
-        messages: [
-          {
-            id: 'init_1',
-            sender: 'aura',
-            text: "Systems initialized. I am Coach Aura. State your targets, and let's optimize your athletic kinetics today.",
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      });
-    }
-  } else if (mode === 'signin') {
+  if (mode === 'signin') {
     if (!existingUser) {
-      return res.status(404).json({ error: 'No account found for that email. Please sign up.' });
+      return res.status(404).json({ success: false, error: 'No account found for that email. Please sign up.' });
     }
     if (!password) {
-      return res.status(401).json({ error: 'Password is required.' });
+      return res.status(401).json({ success: false, error: 'Password is required.' });
     }
     const isMatch = await verifyPassword(password, existingUser.passwordHash);
     if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid password for this account.' });
+      return res.status(401).json({ success: false, error: 'Invalid password for this account.' });
     }
-  } else {
-    return res.status(400).json({ error: 'mode must be signin or signup.' });
-  }
 
-  const code = generateOtpCode();
-  const expiresAt = Date.now() + 5 * 60 * 1000;
+    const sessionToken = createSessionToken();
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+    await Session.create({ token: sessionToken, user: existingUser._id, expiresAt });
 
-  await Otp.findOneAndUpdate(
-    { email: normalizedEmail },
-    { email: normalizedEmail, code, expiresAt, attempts: 0 },
-    { upsert: true, new: true }
-  );
-
-  // In this project, OTP must be delivered via SMTP.
-  // If SMTP is not configured, we fail loudly instead of silently previewing the OTP.
-  try {
-    const emailResult = await sendOtpEmail(normalizedEmail, code);
-    console.log('[OTP EMAIL] Sent OTP', { email: normalizedEmail, messageId: emailResult.messageId });
     return res.json({
       success: true,
-      message: 'OTP sent to your email address.',
-      // preview removed to prevent OTP leakage; keep for debugging only if you explicitly add it back later.
-    });
-  } catch (error: any) {
-    console.error('[OTP EMAIL] sendMail failed', {
-      email: normalizedEmail,
-      code,
-      error: error?.message || String(error),
-    });
-    return res.status(500).json({
-      success: false,
-      error: 'Failed to send OTP email. Check SMTP configuration.',
+      message: 'Login successful.',
+      token: sessionToken,
+      user: formatUserResponse(existingUser),
     });
   }
+
+  if (mode === 'signup') {
+    if (!password || password.length < 6) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 6 characters.' });
+    }
+
+    if (existingUser) {
+      return res.status(400).json({ success: false, error: 'Account already exists. Please login.' });
+    }
+
+    const code = generateOtpCode();
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+
+    await Otp.findOneAndUpdate(
+      { email: normalizedEmail },
+      { email: normalizedEmail, code, expiresAt, attempts: 0 },
+      { upsert: true, new: true }
+    );
+
+    // In this project, OTP is only used during signup to verify a new user.
+    // Existing user login flows do not require OTP.
+    try {
+      const emailResult = await sendOtpEmail(normalizedEmail, code);
+      console.log('[OTP EMAIL] Sent OTP', { email: normalizedEmail, messageId: emailResult.messageId });
+      return res.json({
+        success: true,
+        message: 'OTP sent to your email address.',
+      });
+    } catch (error: any) {
+      console.error('[OTP EMAIL] sendMail failed', {
+        email: normalizedEmail,
+        code,
+        error: error?.message || String(error),
+      });
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to send OTP email. Check SMTP configuration.',
+      });
+    }
+  }
+
+  return res.status(400).json({ success: false, error: 'mode must be signin or signup.' });
 }));
 
 app.post('/api/auth/verify-otp', asyncHandler(async (req, res) => {
-  const { email, code } = req.body;
-  if (!email || !code) {
-    return res.status(400).json({ error: 'Email and OTP code are required.' });
+  const { email, code, password } = req.body;
+  if (!email || !code || !password) {
+    return res.status(400).json({ success: false, error: 'Email, password, and OTP code are required.' });
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
   const storedOtp = await Otp.findOne({ email: normalizedEmail });
   if (!storedOtp || storedOtp.expiresAt < Date.now()) {
-    return res.status(400).json({ error: 'OTP is expired or invalid. Request a new code.' });
+    if (storedOtp) await storedOtp.deleteOne();
+    return res.status(400).json({ success: false, error: 'OTP is expired or invalid. Request a new code.' });
   }
 
   if (storedOtp.attempts >= 3) {
     await storedOtp.deleteOne();
-    return res.status(400).json({ error: 'Too many failed verification attempts. Request a new OTP.' });
+    return res.status(400).json({ success: false, error: 'Too many failed verification attempts. Request a new OTP.' });
   }
 
   if (storedOtp.code !== String(code).trim()) {
     storedOtp.attempts += 1;
     await storedOtp.save();
-    return res.status(400).json({ error: 'Incorrect OTP code. Please try again.' });
+    return res.status(400).json({ success: false, error: 'Incorrect OTP code. Please try again.' });
   }
 
   await storedOtp.deleteOne();
 
-  const user = await User.findOne({ email: normalizedEmail });
-  if (!user) {
-    return res.status(404).json({ error: 'User record not found after OTP verification.' });
+  const existingUser = await User.findOne({ email: normalizedEmail });
+  if (existingUser) {
+    return res.status(400).json({ success: false, error: 'Account already exists. Please login instead.' });
   }
+
+  const hashedPassword = await hashPassword(password);
+  const newUser = await User.create({
+    email: normalizedEmail,
+    passwordHash: hashedPassword,
+    onboarded: false,
+    mealLogs: [],
+    weightHistory: [],
+    dailyWater: 0,
+    dailyBurned: 0,
+    dailyWaterTarget: 2500,
+    telemetry: [],
+    messages: [
+      {
+        id: 'init_1',
+        sender: 'aura',
+        text: "Systems initialized. I am Coach Aura. State your targets, and let's optimize your athletic kinetics today.",
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  });
 
   const sessionToken = createSessionToken();
   const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
-  await Session.create({ token: sessionToken, user: user._id, expiresAt });
+  await Session.create({ token: sessionToken, user: newUser._id, expiresAt });
 
-  return res.json({ success: true, token: sessionToken, user: formatUserResponse(user) });
+  return res.json({ success: true, token: sessionToken, user: formatUserResponse(newUser) });
 }));
 
 app.get('/api/auth/profile', asyncHandler(async (req, res) => {

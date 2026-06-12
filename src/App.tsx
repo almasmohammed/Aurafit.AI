@@ -705,13 +705,7 @@ export default function App() {
 
     setIsAuthLoading(true);
     const mode = authStep === 'signup' ? 'signup' : 'signin';
-    const previousStep = authStep;
     setAuthRequestMode(mode);
-    setAuthStep('otp');
-    setOtpTimer(60);
-    setCanResend(false);
-    setAuthOtp(['', '', '', '', '', '']);
-    setTimeout(() => document.getElementById('otp-0')?.focus(), 0);
 
     try {
       const response = await fetch('/api/auth/send-otp', {
@@ -725,19 +719,39 @@ export default function App() {
       });
       const data = await parseJsonResponse(response);
       if (!response.ok) {
-        throw new Error(data?.error || data?.message || `Unable to send OTP (${response.status}).`);
+        throw new Error(data?.error || data?.message || `Authentication failed (${response.status}).`);
       }
 
-      addTelemetry('User Event', `OTP requested for ${authEmail} in ${authStep} mode.`, 24, true);
-      if (data.preview) {
-        setOtpPreview(data.preview);
+      if (mode === 'signin') {
+        // Existing users login immediately without OTP.
+        setSessionToken(data.token);
+        setSessionUser({ email: data.user.email });
+        localStorage.setItem('aurafit_token', data.token);
+        localStorage.setItem('aurafit_user', JSON.stringify({ email: data.user.email }));
+
+        if (data.user.profile && data.user.profile.age) {
+          setProfile(data.user.profile);
+          setIsOnboarded(true);
+          localStorage.setItem('aurafit_profile', JSON.stringify(data.user.profile));
+          localStorage.setItem('aurafit_onboarded', 'true');
+        }
+
+        setAuthFeedback({ text: 'Login successful. Welcome back!', isError: false });
+        setAuthEmail('');
+        setAuthPassword('');
+        return;
       }
+
+      // Signup flow: use OTP verification after sending code.
+      setAuthStep('otp');
+      setOtpTimer(60);
+      setCanResend(false);
+      setAuthOtp(['', '', '', '', '', '']);
+      setTimeout(() => document.getElementById('otp-0')?.focus(), 0);
       setAuthFeedback({ text: 'OTP sent. Check your email and enter the 6-digit code.', isError: false });
     } catch (error: any) {
-      setAuthStep(previousStep);
-      setAuthFeedback({ text: error?.message || 'Unable to send OTP.', isError: true });
+      setAuthFeedback({ text: error?.message || 'Unable to authenticate.', isError: true });
       setOtpPreview(null);
-      // If OTP send fails, clear any stale session token to prevent confusion
       localStorage.removeItem('aurafit_token');
       setSessionToken(null);
     } finally {
@@ -799,7 +813,7 @@ export default function App() {
       const response = await fetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: authEmail, code: fullCode }),
+        body: JSON.stringify({ email: authEmail, code: fullCode, password: authPassword }),
       });
       const data = await parseJsonResponse(response);
       if (!response.ok) {
@@ -817,8 +831,7 @@ export default function App() {
         setIsOnboarded(true);
         localStorage.setItem('aurafit_profile', JSON.stringify(data.user.profile));
         localStorage.setItem('aurafit_onboarded', 'true');
-        
-        // Set personalized greeting message for returning user
+
         const userName = user.email.split('@')[0].charAt(0).toUpperCase() + user.email.split('@')[0].slice(1);
         const userTitle = data.user.profile.gender === 'Male' ? 'Warrior' : 'Queen';
         const personalizedMsg: ChatMessage = {
@@ -830,14 +843,13 @@ export default function App() {
         setMessages([personalizedMsg]);
       }
 
-      setAuthFeedback({ text: 'Authentication successful. Welcome to AuraFit.', isError: false });
+      setAuthFeedback({ text: 'Signup complete. Welcome to AuraFit.', isError: false });
       setAuthOtp(['', '', '', '', '', '']);
       setAuthPassword('');
       setAuthEmail('');
       setAuthStep('signin');
     } catch (error: any) {
       setAuthFeedback({ text: error?.message || 'OTP verification failed.', isError: true });
-      // Clear stale token on OTP verification failure
       localStorage.removeItem('aurafit_token');
       setSessionToken(null);
     } finally {
