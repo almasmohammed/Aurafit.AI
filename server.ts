@@ -50,18 +50,19 @@ async function verifyPassword(password: string, hash: string): Promise<boolean> 
 }
 
 async function sendOtpEmail(email: string, code: string) {
-  console.log('[SMTP] startup config', {
-    SMTP_HOST: process.env.SMTP_HOST,
-    SMTP_PORT: process.env.SMTP_PORT,
-    SMTP_USER: process.env.SMTP_USER,
-    SMTP_PASS_EXISTS: !!process.env.SMTP_PASS,
-  });
-
   const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : undefined;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
-  const from = process.env.EMAIL_FROM || process.env.SMTP_FROM || `AuraFit <${user || 'noreply@aurafit.local'}>`;
+  const from = process.env.SMTP_FROM || `AuraFit <${user || 'noreply@aurafit.local'}>`;
+
+  // Startup logging
+  console.log('[SMTP CONFIG]', {
+    host,
+    port,
+    user,
+    from,
+  });
 
   if (!host) throw new Error('SMTP_HOST missing');
   if (!port) throw new Error('SMTP_PORT missing');
@@ -71,15 +72,22 @@ async function sendOtpEmail(email: string, code: string) {
   const transporter = nodemailer.createTransport({
     host,
     port,
-    secure: port === 465,
+    secure: false,
     auth: { user, pass },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 
-  await transporter.verify();
-  console.log('[SMTP] SMTP verified successfully');
+  try {
+    await transporter.verify();
+    console.log('[SMTP VERIFY] Connection verified successfully');
+  } catch (verifyErr: any) {
+    console.error('[SMTP VERIFY] Failed to verify connection', {
+      error: verifyErr?.message || String(verifyErr),
+    });
+    throw verifyErr;
+  }
 
   const info = await transporter.sendMail({
     from,
