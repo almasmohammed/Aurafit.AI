@@ -68,15 +68,11 @@ async function sendOtpEmail(email: string, code: string) {
   if (!user) throw new Error('SMTP_USER missing');
   if (!pass) throw new Error('SMTP_PASS missing');
 
-
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
     connectionTimeout: 30000,
     greetingTimeout: 30000,
     socketTimeout: 30000,
