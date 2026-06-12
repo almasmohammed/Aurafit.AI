@@ -1,0 +1,32 @@
+[
+  {
+    "email": "mohamedfarmanraza@gmail.com",
+    "passwordHash": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+    "profile": {},
+    "createdAt": "2026-06-11T16:48:35.270Z"
+  },
+  {
+    "email": "test@example.com",
+    "passwordHash": "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+    "profile": {},
+    "createdAt": "2026-06-11T17:13:18.159Z"
+  },
+  {
+    "email": "test2@example.com",
+    "passwordHash": "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+    "profile": {},
+    "createdAt": "2026-06-11T17:13:55.889Z"
+  },
+  {
+    "email": "testuser@example.com",
+    "passwordHash": "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+    "profile": {},
+    "createdAt": "2026-06-11T17:16:19.717Z"
+  },
+  {
+    "email": "mohamedfarmanraza0@gmail.com",
+    "passwordHash": "$2b$10$u5cnO1n6NqnOrs2JSDOHT.99e65EpL7lU6U9SL6xn1P10lLCw20Li",
+    "profile": {},
+    "createdAt": "2026-06-12T08:51:12.889Z"
+  }
+]

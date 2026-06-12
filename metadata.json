@@ -1,0 +1,6 @@
+{
+  "name": "AuraFit",
+  "description": "An AI-powered fitness onboarding, workout tracking, nutrition planning, and conversational coach dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
