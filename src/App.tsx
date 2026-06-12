@@ -250,16 +250,11 @@ export default function App() {
   // Auth and Onboarding Screens Flow states
   const [sessionUser, setSessionUser] = useState<{ email: string } | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const [authStep, setAuthStep] = useState<'signin' | 'signup' | 'otp'>('signin');
-  const [authRequestMode, setAuthRequestMode] = useState<'signin' | 'signup'>('signin');
+  const [authStep, setAuthStep] = useState<'signin' | 'signup'>('signin');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
-  const [authOtp, setAuthOtp] = useState(['', '', '', '', '', '']);
-  const [otpTimer, setOtpTimer] = useState(60);
-  const [canResend, setCanResend] = useState(false);
   const [authFeedback, setAuthFeedback] = useState<{ text: string; isError: boolean } | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
-  const [otpPreview, setOtpPreview] = useState<string | null>(null);
 
   // Profile and Onboarding (defaults only for onboarding UI; not persisted)
   const EMPTY_PROFILE: UserProfile = {
@@ -447,23 +442,6 @@ export default function App() {
 
   // --- EFFECT TRIGGERS ---
 
-  // OTP Verification Throttle timer countdown
-  useEffect(() => {
-    let intervalId: any;
-    if (authStep === 'otp' && otpTimer > 0) {
-      intervalId = setInterval(() => {
-        setOtpTimer((prev) => {
-          if (prev <= 1) {
-            setCanResend(true);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(intervalId);
-  }, [authStep, otpTimer]);
-
   const parseJsonResponse = async (response: Response) => {
     const text = await response.text();
     if (!text) {
@@ -485,9 +463,7 @@ export default function App() {
 
   useEffect(() => {
     const loadSession = async () => {
-      const isOtpStep = authStep === 'otp';
-      // Never auto-load session if we're in OTP verification flow
-      if (!sessionToken || isOtpStep) return;
+      if (!sessionToken) return;
       try {
         const response = await fetch('/api/auth/profile', {
           headers: {
@@ -505,17 +481,14 @@ export default function App() {
           localStorage.setItem('aurafit_onboarded', 'true');
         }
       } catch (err: any) {
-        // Only clear token if we're NOT in the middle of OTP verification
-        if (!isOtpStep) {
-          localStorage.removeItem('aurafit_token');
-          localStorage.removeItem('aurafit_user');
-          setSessionToken(null);
-          setSessionUser(null);
-        }
+        localStorage.removeItem('aurafit_token');
+        localStorage.removeItem('aurafit_user');
+        setSessionToken(null);
+        setSessionUser(null);
       }
     };
     loadSession();
-  }, [sessionToken, authStep]);
+  }, [sessionToken]);
 
 
 
@@ -590,10 +563,6 @@ export default function App() {
   const userBMIValue = useMemo(() => {
     return calculateBMI(profile.weight, profile.height);
   }, [profile.weight, profile.height]);
-
-  const otpPreviewCode = useMemo(() => {
-    return otpPreview?.match(/\d{6}/)?.[0] || null;
-  }, [otpPreview]);
 
   // Dynamically calculate calorie calculations in real-time
   const totalCaloriesConsumed = useMemo(() => {
@@ -691,7 +660,6 @@ export default function App() {
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthFeedback(null);
-    setOtpPreview(null);
 
     if (!authEmail || !authEmail.includes('@')) {
       setAuthFeedback({ text: 'Provide a valid athletic email address.', isError: true });
@@ -704,17 +672,14 @@ export default function App() {
     }
 
     setIsAuthLoading(true);
-    const mode = authStep === 'signup' ? 'signup' : 'signin';
-    setAuthRequestMode(mode);
 
     try {
-      const response = await fetch('/api/auth/send-otp', {
+      const response = await fetch('/api/auth/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: authEmail,
           password: authPassword,
-          mode,
         }),
       });
       const data = await parseJsonResponse(response);
@@ -722,134 +687,24 @@ export default function App() {
         throw new Error(data?.error || data?.message || `Authentication failed (${response.status}).`);
       }
 
-      if (mode === 'signin') {
-        // Existing users login immediately without OTP.
-        setSessionToken(data.token);
-        setSessionUser({ email: data.user.email });
-        localStorage.setItem('aurafit_token', data.token);
-        localStorage.setItem('aurafit_user', JSON.stringify({ email: data.user.email }));
-
-        if (data.user.profile && data.user.profile.age) {
-          setProfile(data.user.profile);
-          setIsOnboarded(true);
-          localStorage.setItem('aurafit_profile', JSON.stringify(data.user.profile));
-          localStorage.setItem('aurafit_onboarded', 'true');
-        }
-
-        setAuthFeedback({ text: 'Login successful. Welcome back!', isError: false });
-        setAuthEmail('');
-        setAuthPassword('');
-        return;
-      }
-
-      // Signup flow: use OTP verification after sending code.
-      setAuthStep('otp');
-      setOtpTimer(60);
-      setCanResend(false);
-      setAuthOtp(['', '', '', '', '', '']);
-      setTimeout(() => document.getElementById('otp-0')?.focus(), 0);
-      setAuthFeedback({ text: 'OTP sent. Check your email and enter the 6-digit code.', isError: false });
-    } catch (error: any) {
-      setAuthFeedback({ text: error?.message || 'Unable to authenticate.', isError: true });
-      setOtpPreview(null);
-      localStorage.removeItem('aurafit_token');
-      setSessionToken(null);
-    } finally {
-      setIsAuthLoading(false);
-    }
-  };
-
-  const handleResendOtp = async () => {
-    if (!canResend) return;
-    setIsAuthLoading(true);
-    setAuthFeedback(null);
-    setOtpPreview(null);
-
-    try {
-      const response = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: authEmail,
-          password: authPassword,
-          mode: authRequestMode,
-        }),
-      });
-      const data = await parseJsonResponse(response);
-      if (!response.ok) {
-        throw new Error(data?.error || data?.message || `Unable to resend OTP (${response.status}).`);
-      }
-      setOtpTimer(60);
-      setCanResend(false);
-      setAuthOtp(['', '', '', '', '', '']);
-      setTimeout(() => document.getElementById('otp-0')?.focus(), 0);
-      if (data.preview) setOtpPreview(data.preview);
-      setAuthFeedback({ text: 'OTP resent. Check your inbox.', isError: false });
-    } catch (error: any) {
-      setAuthFeedback({ text: error?.message || 'Unable to resend OTP.', isError: true });
-    } finally {
-      setIsAuthLoading(false);
-    }
-  };
-
-  const applyOtpCode = (code: string) => {
-    const digits = code.replace(/\D/g, '').slice(0, 6).split('');
-    setAuthOtp(Array.from({ length: 6 }, (_, idx) => digits[idx] || ''));
-    if (digits.length < 6) {
-      document.getElementById(`otp-${digits.length}`)?.focus();
-    }
-  };
-
-  const handleSubmitOtp = async () => {
-    const fullCode = authOtp.join('');
-    if (fullCode.length < 6) {
-      setAuthFeedback({ text: 'Enter the full 6-digit OTP code.', isError: true });
-      return;
-    }
-
-    setIsAuthLoading(true);
-    setAuthFeedback(null);
-    try {
-      const response = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: authEmail, code: fullCode, password: authPassword }),
-      });
-      const data = await parseJsonResponse(response);
-      if (!response.ok) {
-        throw new Error(data?.error || data?.message || 'OTP verification failed.');
-      }
-
-      const user = { email: data.user.email };
-      setSessionUser(user);
+      // Login successful for both new and existing users
       setSessionToken(data.token);
-      localStorage.setItem('aurafit_user', JSON.stringify(user));
+      setSessionUser({ email: data.user.email });
       localStorage.setItem('aurafit_token', data.token);
+      localStorage.setItem('aurafit_user', JSON.stringify({ email: data.user.email }));
 
       if (data.user.profile && data.user.profile.age) {
         setProfile(data.user.profile);
         setIsOnboarded(true);
         localStorage.setItem('aurafit_profile', JSON.stringify(data.user.profile));
         localStorage.setItem('aurafit_onboarded', 'true');
-
-        const userName = user.email.split('@')[0].charAt(0).toUpperCase() + user.email.split('@')[0].slice(1);
-        const userTitle = data.user.profile.gender === 'Male' ? 'Warrior' : 'Queen';
-        const personalizedMsg: ChatMessage = {
-          id: 'init_1',
-          sender: 'aura',
-          text: `Greetings, ${userTitle} ${userName}. I am Coach Aura. Let's optimize your athletic kinetics and dominate your physical targets today.`,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-        };
-        setMessages([personalizedMsg]);
       }
 
-      setAuthFeedback({ text: 'Signup complete. Welcome to AuraFit.', isError: false });
-      setAuthOtp(['', '', '', '', '', '']);
-      setAuthPassword('');
+      setAuthFeedback({ text: 'Login successful. Welcome!', isError: false });
       setAuthEmail('');
-      setAuthStep('signin');
+      setAuthPassword('');
     } catch (error: any) {
-      setAuthFeedback({ text: error?.message || 'OTP verification failed.', isError: true });
+      setAuthFeedback({ text: error?.message || 'Unable to authenticate.', isError: true });
       localStorage.removeItem('aurafit_token');
       setSessionToken(null);
     } finally {
@@ -1400,19 +1255,18 @@ export default function App() {
           )}
 
           {/* SWAPPABLE INTERFACES */}
-          {authStep !== 'otp' ? (
-            <form onSubmit={handleAuthSubmit} className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-mono tracking-wider uppercase text-zinc-400 mb-1.5">
-                  Athletic Email Coordinate
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  placeholder="name@gmail.com"
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-2.5 px-3.5 text-sm text-white focus:outline-none focus:border-[#8B5CF6] transition-colors font-sans"
+          <form onSubmit={handleAuthSubmit} className="space-y-4">
+            <div>
+              <label className="block text-[11px] font-mono tracking-wider uppercase text-zinc-400 mb-1.5">
+                Athletic Email Coordinate
+              </label>
+              <input
+                type="email"
+                required
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="name@gmail.com"
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-2.5 px-3.5 text-sm text-white focus:outline-none focus:border-[#8B5CF6] transition-colors font-sans"
                 />
               </div>
 
@@ -1434,7 +1288,7 @@ export default function App() {
                 type="submit"
                 className="w-full bg-[#8B5CF6] hover:bg-[#7c4fe0] text-white text-xs font-mono uppercase tracking-wider font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer mt-2"
               >
-                <span>{authStep === 'signin' ? 'Verify Quantum Identity' : 'Establish Kinetic Node'}</span>
+                <span>Initiate Neural Link</span>
                 <ChevronRight className="w-4 h-4" />
               </button>
 
@@ -1451,126 +1305,8 @@ export default function App() {
                 </button>
               </div>
             </form>
-          ) : (
-            // MODULE A: simulated 6-digit OTP code entry
-            <div className="space-y-5">
-              <div>
-                <div className="text-center mb-4">
-                  <span className="text-xs text-zinc-400 leading-normal block">
-                    We transmitted an encrypted OTP token sequence to: <strong className="text-zinc-200">{authEmail}</strong>
-                  </span>
-                  <span className="text-[10px] text-zinc-500 font-mono mt-1 block">
-                    Enter the 6-digit OTP sent to your email.
-                  </span>
-                {otpPreview ? (
-                  <span className="text-[10px] text-emerald-300 font-mono mt-2 block break-words">
-                    Preview: {otpPreview}
-                  </span>
-                ) : null}
-                {otpPreviewCode ? (
-                  <button
-                    type="button"
-                    onClick={() => applyOtpCode(otpPreviewCode)}
-                    className="mt-2 text-[10px] text-[#00E5FF] hover:text-white font-mono uppercase tracking-wider"
-                  >
-                    Fill preview code
-                  </button>
-                ) : null}
-                </div>
-
-                {/* 6 Grid inputs */}
-                <div className="grid grid-cols-6 gap-2 max-w-xs mx-auto mb-4">
-                  {authOtp.map((digit, idx) => (
-                    <input
-                      key={idx}
-                      id={`otp-${idx}`}
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete={idx === 0 ? 'one-time-code' : 'off'}
-                      maxLength={1}
-                      value={digit}
-                      onChange={(e) => {
-                        const val = e.target.value.replace(/\D/g, '');
-                        if (val.length > 1) {
-                          applyOtpCode(val);
-                          document.getElementById(`otp-${Math.min(val.length, 6) - 1}`)?.focus();
-                          return;
-                        }
-                        const nextOtp = [...authOtp];
-                        nextOtp[idx] = val;
-                        setAuthOtp(nextOtp);
-
-                        // Auto focus shifts
-                        if (val && idx < 5) {
-                          const nextInput = document.getElementById(`otp-${idx + 1}`);
-                          nextInput?.focus();
-                        }
-                      }}
-                      onPaste={(e) => {
-                        e.preventDefault();
-                        const pastedCode = e.clipboardData.getData('text');
-                        applyOtpCode(pastedCode);
-                        document.getElementById(`otp-${Math.min(pastedCode.replace(/\D/g, '').length, 6) - 1}`)?.focus();
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Backspace' && !authOtp[idx] && idx > 0) {
-                          document.getElementById(`otp-${idx - 1}`)?.focus();
-                        }
-                      }}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-lg text-center py-2.5 text-lg font-mono font-bold text-white focus:outline-none focus:border-[#00E5FF] transition-colors"
-                    />
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between text-[11px] font-mono max-w-xs mx-auto mb-2">
-                  <span className="text-zinc-500">RESEND LOCKOUT:</span>
-                  {canResend ? (
-                    <button
-                      type="button"
-                      onClick={handleResendOtp}
-                      className="text-[#00E5FF] hover:underline"
-                    >
-                      RESEND CODE
-                    </button>
-                  ) : (
-                    <span className="text-[#8B5CF6] font-medium">{otpTimer}s</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={handleSubmitOtp}
-                  disabled={isAuthLoading}
-                  className="w-full bg-[#00E5FF] hover:bg-[#00cce3] text-zinc-950 font-mono text-xs font-bold uppercase tracking-wider py-3 px-4 rounded-lg transition-colors cursor-pointer disabled:opacity-60 disabled:pointer-events-none"
-                >
-                  VERIFY OTP & LOGIN
-                </button>
-                <button
-                  type="button"
-                  onClick={handleResendOtp}
-                  disabled={!canResend || isAuthLoading}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 font-mono text-[10px] uppercase py-2 px-4 rounded-lg transition-colors cursor-pointer disabled:opacity-60 disabled:pointer-events-none"
-                >
-                  RESEND CODE {canResend ? '' : `(${otpTimer}s)`}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthStep('signin');
-                    setAuthFeedback(null);
-                    setAuthOtp(['', '', '', '', '', '']);
-                  }}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 font-mono text-[10px] uppercase py-2 px-4 rounded-lg transition-colors cursor-pointer"
-                >
-                  BACK TO EMAIL LOGIN
-                </button>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
     );
   }
 
